@@ -1,0 +1,413 @@
+interface NamedTextbox extends fabric.Textbox{
+  name?: string;
+}
+import { Component, AfterViewInit, ViewChild, ElementRef, OnDestroy, HostListener } from '@angular/core';
+import * as fabric from 'fabric';
+import * as XLSX from 'xlsx';
+import {jsPDF} from 'jspdf';
+import { NgIf } from '@angular/common';
+@Component({
+  selector: 'app-certificate-builder',
+  standalone: true,
+  imports: [NgIf],
+  templateUrl: './certificate-builder.component.html',
+  styleUrl: './certificate-builder.component.css'
+})
+export class CertificateBuilderComponent implements AfterViewInit, OnDestroy{
+  selectedCoords = {
+    x: 0,
+    y: 0,
+    width: 0,
+    height: 0
+  };
+  uploadedData:any[] = [];
+  dragOver = false;
+  copiedObject: fabric.Object | null = null;
+  
+  @ViewChild('htmlCanvas', { static: false }) htmlCanvas!: ElementRef;
+  canvas!: fabric.Canvas;
+  isShiftPressed:boolean = false;
+ 
+  ngAfterViewInit(): void {
+    let isDragging = false;
+    let lastPosX = 0;
+    let lastPosY = 0;
+    this.canvas = new fabric.Canvas(this.htmlCanvas.nativeElement, {
+      width: 900,
+      height: 700,
+      backgroundColor: '#ccc',
+      preserveObjectStacking:true
+    });
+    // Add keyboard event Listener
+    window.addEventListener('keydown',this.handleKeyDown.bind(this));
+    window.addEventListener('keydown',(e)=>{
+      if(e.key === 'Shift')this.isShiftPressed = true;
+    });
+    window.addEventListener('keyup',(e)=>{
+      if(e.key === 'Shift')this.isShiftPressed = false;
+    });
+    window.addEventListener('keydown', (e: KeyboardEvent) => {
+      const obj = this.canvas.getActiveObject();
+      if (obj) {
+        let moved = false;
+        const step = e.shiftKey?5:1;
+        switch (e.key) {
+          case 'ArrowUp':
+            obj.top = (obj.top ?? 0) - step;
+            moved = true;
+            break;
+          case 'ArrowDown':
+            obj.top = (obj.top ?? 0) + step;
+            moved = true;
+            break;
+          case 'ArrowLeft':
+            obj.left = (obj.left ?? 0) - step;
+            moved = true;
+            break;
+          case 'ArrowRight':
+            obj.left = (obj.left ?? 0) + step;
+            moved = true;
+            break;
+        }
+    
+        if (moved) {
+          obj.setCoords(); // Updates internal coordinates
+          this.canvas.requestRenderAll(); // Triggers re-render
+          this.updateCoords(obj); // Updates your coordinate box
+          e.preventDefault(); // Prevents page scroll
+        }
+      }
+    });
+    
+
+    this.canvas.on('selection:created', this.updateCoords.bind(this));
+    this.canvas.on('selection:updated', this.updateCoords.bind(this));
+    this.canvas.on('object:modified', this.updateCoords.bind(this));
+    this.canvas.on('object:moving', this.updateCoords.bind(this));
+    this.canvas.on('object:scaling', this.updateCoords.bind(this));
+    this.canvas.on('mouse:wheel', (opt)=>{
+      const delta = opt.e.deltaY;
+      let zoom = this.canvas.getZoom();
+      zoom *= 0.999 ** delta;
+
+      // clamp zoom level
+      if(zoom > 5)zoom = 5;
+      if(zoom < 0.2)zoom = 0.2;
+      // Zoom relative to cursor position
+      const zoompoint = new fabric.Point(opt.e.offsetX, opt.e.offsetY);
+      this.canvas.zoomToPoint(zoompoint,zoom);
+      opt.e.preventDefault();
+      opt.e.stopPropagation();
+    });
+    this.canvas.on('mouse:down',(opt)=>{
+      const evt = opt.e as MouseEvent;
+     
+      if(evt.button === 2 || this.isShiftPressed){
+        isDragging = true;
+        this.canvas.selection = false;
+        lastPosX = evt.clientX;
+        lastPosY = evt.clientY;
+        this.htmlCanvas.nativeElement.style.cursor = 'grabbing';
+      }
+    });
+    this.canvas.on('mouse:move',(opt)=>{
+      if(isDragging){
+        const e = opt.e as MouseEvent;
+        const vpt = this.canvas.viewportTransform!;
+        vpt[4] += e.clientX - lastPosX;
+        vpt[5] += e.clientY - lastPosY;
+        this.canvas.requestRenderAll();
+        lastPosX = e.clientX;
+        lastPosY = e.clientY;
+      }
+    });
+    this.canvas.on('mouse:up',()=>{
+      isDragging = false;
+      this.canvas.selection = true;
+      this.htmlCanvas.nativeElement.style.cursor = 'default';
+    })
+  }
+
+  @HostListener('contextmenu', ['$event'])
+  onRightClick(event:MouseEvent){
+    event.preventDefault();
+  }
+
+  async handleKeyDown(event:KeyboardEvent){
+    const activeObject = this.canvas.getActiveObject();
+
+    if((event.ctrlKey || event.metaKey) && event.key === 'c'){
+      // copy
+      if(activeObject){
+        this.copiedObject = await activeObject.clone();
+      }
+    }
+
+    if((event.ctrlKey || event.metaKey) && event.key === 'v'){
+      // paste
+      if(this.copiedObject){
+        const cloned = await this.copiedObject.clone();
+          cloned.set({
+            left:(cloned.left ?? 0) + 10,
+            top: (cloned.top ?? 0)+10,
+            borderColor: 'green',
+            cornerColor: 'black',
+            cornerSize: 10,
+            cornerStyle: 'circle',
+            transparentCorners:false,
+            borderScaleFactor:2,
+            evented:true,
+          });
+          this.canvas.add(cloned);
+          this.canvas.setActiveObject(cloned);
+          this.canvas.requestRenderAll();
+       
+      }
+    }
+  
+    // For Delete request
+    if(event.key === 'Delete'){
+   
+      if(activeObject){
+        this.canvas.remove(activeObject);
+        this.canvas.discardActiveObject();
+        this.canvas.requestRenderAll();
+      }
+    }
+  }
+ 
+  allowDrop(event: DragEvent): void {
+    event.preventDefault(); // Allow dropping
+    this.dragOver = true;
+  }
+  onDragLeave(event:DragEvent){
+    this.dragOver = false;
+  }
+  onDrop(event:DragEvent){
+    this.dragOver = false;
+    this.setCertificateBackground(event,true);
+  }
+  
+
+  updateCoords(eventOrObject?: any) {
+    const obj = eventOrObject?.target ?? eventOrObject;
+    if (obj) {
+      this.selectedCoords = {
+        x: Math.round(obj.left ?? 0),
+        y: Math.round(obj.top ?? 0),
+        width: Math.round(obj.getScaledWidth?.() ?? obj.width ?? 0),
+        height: Math.round(obj.getScaledHeight?.() ?? obj.height ?? 0)
+      };
+    }
+  }
+  
+  // set certificate image as background
+  async setCertificateBackground(event:any,fromDrop:boolean = false):Promise<void>{
+    event.preventDefault();
+    let file:File | null = null;
+    if(fromDrop && event.dataTransfer?.files?.[0]){
+      file = event.dataTransfer?.files[0];
+
+    }else if(event.target?.files?.[0]){
+      file = event.target.files[0];
+    }
+    if(!file || !file.type.startsWith('image/')){
+      alert('Please upload a valid image file.');
+      return;
+    }
+  
+    const reader = new FileReader();
+    
+    reader.onload = async (f: ProgressEvent<FileReader>)=>{
+      const url = f.target?.result as string;
+      fabric.Image.fromURL(url).then((img:fabric.Image)=>{
+        const canvasWidth = this.canvas.getWidth();
+        const canvasHeight = this.canvas.getHeight();
+        const imgOriginalWidth = img.width!;
+        const imgOriginalHeight = img.height!;
+        // Maintain aspect ratio
+        const scale = canvasHeight / imgOriginalHeight;
+        const scaleWidth = imgOriginalWidth * scale;
+        // const scaleX = canvasWidth/img.width!;
+        // const scaleY = canvasHeight/img.height!;
+     
+        img.set({
+          scaleX:scale,
+          scaleY:scale,
+          left:(canvasWidth - scaleWidth)/2,
+          selectable:false,
+          evented:false
+        });
+        if(this.canvas.backgroundImage){
+          this.canvas.backgroundImage =  undefined;
+        }
+        this.canvas.set('backgroundImage',img);
+        // this.canvas.backgroundImage = img;
+        this.canvas.requestRenderAll();
+     
+      });
+    };
+    reader.readAsDataURL(file);
+  }
+ 
+
+  addField(fieldType:'username' | 'date' | 'body'):void{
+    let defaultText = '';
+    let width = 100;
+    let fontSize = 24;
+
+    if(fieldType === 'username')defaultText = 'User Name';
+    else if(fieldType === 'date')defaultText = 'DD/MM/YYYY';
+    else if(fieldType === 'body'){
+      defaultText = 'This is to certify that...';
+      width:400;
+      fontSize=18;
+    }
+    const textbox = new fabric.Textbox(defaultText,{
+      left:100,
+      top:100,
+      width,
+      fontSize,
+      editable:true,
+      transparentCorners:false,
+      lockUniScaling:false,
+      name:fieldType
+    }) as NamedTextbox;
+    // (textbox as any).name = fieldType;
+    textbox.name = fieldType;
+    textbox.set({
+      borderColor: 'green',
+      cornerColor: 'black',
+      cornerSize: 10,
+      cornerStyle: 'circle',
+      borderScaleFactor:2
+    });   
+    this.canvas.add(textbox);
+    this.canvas.setActiveObject(textbox);
+    this.canvas.bringObjectForward(textbox);
+  }
+  addImage(event:any, type:'logo' | 'signature'):void{
+    const file = event.target.files[0];
+    const reader = new FileReader();
+
+    reader.onload = (f:any)=>{
+      const url = f.target.result;
+      fabric.Image.fromURL(url).then((img:fabric.Image)=>{
+        img.set({
+          left:150,
+          top:150,
+          scaleX:0.4,
+          scaleY:0.4,
+          // borderColor:'gray',
+          // cornerColor:'blue',
+          transparentCorners:false,
+          lockUniScaling:true,
+          name:type,
+          borderColor: 'green',
+          cornerColor: 'black',
+          cornerSize: 10,
+          cornerStyle: 'circle',
+          borderScaleFactor:2
+        });
+        this.canvas.add(img);
+        this.canvas.setActiveObject(img);
+        this.canvas.bringObjectForward(img);
+      })
+    }
+    reader.readAsDataURL(file);
+  }
+
+  download(): void {
+    const dataURL = this.canvas.toDataURL({ format: 'png', multiplier:2 });
+    const link = document.createElement('a');
+    link.href = dataURL;
+    link.download = 'certificate.png';
+    link.click();
+  }
+  // update canvas fields
+  updateCanvasFields(rowData: any) {
+    this.canvas.getObjects().forEach(obj => {
+      const namedTextbox = obj as NamedTextbox;
+      if (obj.type === 'textbox' && namedTextbox.name) {
+        const fieldName = namedTextbox.name;
+        console.log("Checking field:", fieldName, "against rowData keys:", Object.keys(rowData));
+
+        if (rowData[fieldName] !== undefined) {
+    
+          namedTextbox.text = rowData[fieldName];
+          console.log("Rowdata: ",rowData[fieldName]);
+          console.log("namedTextbox.text",namedTextbox.text);
+        }
+      }
+    });
+    // this.canvas.requestRenderAll();
+    this.canvas.renderAll();
+  }
+  // export canvas to pdf
+  exportCanvasToPDF(filename: string) {
+    const dataUrl = this.canvas.toDataURL({ format: 'png' ,multiplier:2});
+    const img = new Image();
+    img.src = dataUrl;
+    document.body.appendChild(img);
+    return;
+    const pdf = new jsPDF({
+      orientation: this.canvas.width > this.canvas.height ? 'landscape' : 'portrait',
+      unit: 'px',
+      format: [this.canvas.width, this.canvas.height]
+    });
+    
+    pdf.addImage(dataUrl, 'PNG', 0, 0, this.canvas.width, this.canvas.height);
+    pdf.save(filename);
+  }
+  // Generate certificate from Excel file
+  async generateCertificates() {
+    if (!this.uploadedData || this.uploadedData.length === 0) {
+      alert('Please upload Excel data first');
+      return;
+    }
+  
+    for (let i = 0; i < this.uploadedData.length; i++) {
+      const row = this.uploadedData[i];
+      console.log("Updating with row: ",row);
+      this.updateCanvasFields(row);
+  
+      // Small delay to ensure canvas updates (optional)
+      // await new Promise(res => setTimeout(res, 200));
+      await this.waitForRender();
+  
+      // Save PDF for each row with a unique filename
+      this.exportCanvasToPDF(`certificate_${i + 1}.pdf`);
+    }
+  }
+  waitForRender(): Promise<void> {
+    return new Promise(resolve => {
+      requestAnimationFrame(() => {
+        this.canvas.requestRenderAll();
+        requestAnimationFrame(()=>resolve()); // Wait for next frame after render
+      });
+    });
+  }
+  
+  
+  
+  // Excel file handler
+  onExcelUpload(event:any){
+    const file = event.target.files[0];
+    if(!file)return;
+
+    const reader = new FileReader();
+    reader.onload = (e:any)=>{
+      const data = new Uint8Array(e.target.result);
+      const workbook = XLSX.read(data, {type:'array'});
+      const sheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[sheetName];
+      this.uploadedData = XLSX.utils.sheet_to_json(worksheet);
+      console.log('Parsed Excel Data:',this.uploadedData);
+      alert(`Loaded ${this.uploadedData.length} rows`);
+    };
+    reader.readAsArrayBuffer(file);
+  }
+  ngOnDestroy(): void {
+      window.removeEventListener('keydown',this.handleKeyDown.bind(this));
+  }
+}

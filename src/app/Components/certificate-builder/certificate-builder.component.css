@@ -1,0 +1,27 @@
+
+.canvas-wrapper {
+  border: 2px dashed #aaa;
+  border-radius: 8px;
+  padding: 5px;
+  background-color: #fafafa;
+  display: inline-block;
+  position: relative;
+  margin: 10px;
+  /* overflow: scroll; */
+}
+
+.canvas-wrapper .grabbing{
+  cursor: grabbing !important;
+}
+canvas.grabbing{
+  cursor: grabbing !important;
+}
+canvas{
+  cursor: default;
+}
+
+.canvas-wrapper.dragover {
+  border-color: #007bff;
+  background-color: #e6f0ff;
+}
+
