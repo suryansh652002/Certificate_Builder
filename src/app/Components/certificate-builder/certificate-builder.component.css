@@ -23,5 +23,27 @@ canvas{
 .canvas-wrapper.dragover {
   border-color: #007bff;
   background-color: #e6f0ff;
+  /* font-family: ; */
 }
+.toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+/* .toolbar button {
+  width: 32px;
+  height: 32px;
+  font-weight: bold;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.toolbar button.active {
+  background: #007bff;
+  color: #fff;
+} */
+
 

@@ -12,11 +12,16 @@ import {
 import * as fabric from 'fabric';
 import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
-import { NgIf } from '@angular/common';
+import { NgIf, NgFor } from '@angular/common';
+import { FormsModule } from '@angular/forms';
+import { TEvent, TPointerEvent } from 'fabric';
+
+type CanvasPointerEvent = TEvent<TPointerEvent>;
+type CanvasSelectEvent = CanvasPointerEvent & { target?: fabric.Object };
 @Component({
   selector: 'app-certificate-builder',
   standalone: true,
-  imports: [NgIf],
+  imports: [NgIf, FormsModule, NgFor],
   templateUrl: './certificate-builder.component.html',
   styleUrl: './certificate-builder.component.css',
 })
@@ -30,6 +35,18 @@ export class CertificateBuilderComponent implements AfterViewInit, OnDestroy {
   uploadedData: any[] = [];
   dragOver = false;
   copiedObject: fabric.Object | null = null;
+  activeTextbox: fabric.Textbox | null = null;
+
+  fontFamilies = [
+    'Arial',
+    'Helvetica',
+    'Times New Roman',
+    'Georgia',
+    'Courier New',
+    'Verdana',
+  ];
+  textColor = '#000000';
+  uiFontSize = 24;
 
   @ViewChild('htmlCanvas', { static: false }) htmlCanvas!: ElementRef;
   canvas!: fabric.Canvas;
@@ -91,6 +108,20 @@ export class CertificateBuilderComponent implements AfterViewInit, OnDestroy {
     this.canvas.on('object:modified', this.updateCoords.bind(this));
     this.canvas.on('object:moving', this.updateCoords.bind(this));
     this.canvas.on('object:scaling', this.updateCoords.bind(this));
+    this.canvas.on('object:scaling', (e) =>
+      this.handleTextboxScaling(e.target)
+    );
+    this.canvas.on('object:modified', (e) => this.syncUiFontSize(e.target));
+    this.canvas.on('selection:created', (e) => {
+      this.onSelection(e as unknown as CanvasSelectEvent);
+    });
+    this.canvas.on('selection:updated', (e) => {
+      this.onSelection(e as unknown as CanvasPointerEvent);
+    });
+    this.canvas.on(
+      'before:selection:cleared',
+      () => (this.activeTextbox = null)
+    );
     this.canvas.on('mouse:wheel', (opt) => {
       const delta = opt.e.deltaY;
       let zoom = this.canvas.getZoom();
@@ -132,6 +163,153 @@ export class CertificateBuilderComponent implements AfterViewInit, OnDestroy {
       this.canvas.selection = true;
       this.htmlCanvas.nativeElement.style.cursor = 'default';
     });
+  }
+  // keep UI in sync helper
+  private syncUiFontSize(obj: fabric.Object | undefined) {
+    if (obj?.type === 'textbox') {
+      this.uiFontSize = (obj as fabric.Textbox).fontSize as number;
+    }
+  }
+
+  private handleTextboxScaling(obj: fabric.Object | undefined) {
+    if (obj?.type === 'textbox') {
+      const textbox = obj as fabric.Textbox;
+      // Store original width to check if it needs adjustment
+      const originalWidth = textbox.width || 100;
+      const originalFontSize = textbox.fontSize || 16;
+      const scale = textbox.scaleX || 1; // Assume uniform scaling
+      const newFontSize = Math.round(originalFontSize * scale);
+
+      // Update fontSize and reset scale
+      textbox.set({
+        fontSize: newFontSize,
+        scaleX: 1,
+        scaleY: 1,
+      });
+
+      // Recalculate dimensions to fit content
+      textbox.initDimensions();
+
+      // Calculate the natural content width
+      const contentWidth = textbox.calcTextWidth(); // Get width of text content
+      console.log("content width: ",contentWidth);
+      textbox.set({
+        width: Math.max(contentWidth, 100), // Ensure minimum width
+      });
+
+      // Update coordinates and invalidate cache
+      textbox.setCoords();
+      textbox.dirty = true;
+      (textbox as any)._clearCache?.();
+
+      // Sync UI
+      this.uiFontSize = newFontSize;
+
+      // Render canvas
+      this.canvas.renderAll();
+    }
+  }
+
+  // onSelection
+  private onSelection(evt?: any) {
+    // const obj = eventOrObject?.target ?? eventOrObject;
+    let obj: fabric.Object | undefined = evt.target;
+
+    // 2️⃣  multi‑object selection events (selection:created / updated)
+    if (!obj && Array.isArray(evt.selected) && evt.selected.length) {
+      obj = evt.selected[0];
+    }
+    console.log('e: ', obj);
+    // const obj = e.target as fabric.Object | undefined;
+    if (obj && obj.type === 'textbox') {
+      this.activeTextbox = obj as fabric.Textbox;
+      console.log('activeTextBox: ', this.activeTextbox);
+      this.textColor = (this.activeTextbox.fill as string) ?? '#000000';
+    } else {
+      this.activeTextbox = null;
+    }
+  }
+  applyFontSize(size: number) {
+    if (!this.activeTextbox) return;
+    // this.activeTextbox.fontSize = +size;
+    this.activeTextbox.set({
+      fontSize: +size,
+      scaleX: 1, // Reset scale to avoid compounding
+      scaleY: 1,
+    });
+    this.activeTextbox.initDimensions();
+      // Adjust width to content
+      const contentWidth = this.activeTextbox.calcTextWidth();
+      this.activeTextbox.set({
+        width: Math.max(contentWidth, 100)
+      });
+    this.activeTextbox.setCoords();
+    this.activeTextbox.dirty = true;
+    (this.activeTextbox as any)._clearCache?.();
+    this.canvas.requestRenderAll();
+    this.uiFontSize = +size;
+  }
+
+  applyTextChange() {
+    if (!this.activeTextbox) return;
+    if (this.activeTextbox) {
+      this.activeTextbox.set({
+        fontFamily: this.activeTextbox.fontFamily,
+        // fontSize: this.activeTextbox.fontSize,
+        scaleX: 1,
+        scaleY: 1,
+      });
+      this.activeTextbox.initDimensions();
+      // Adjust width to content
+      const contentWidth = this.activeTextbox.calcTextWidth();
+      this.activeTextbox.set({
+        width: Math.max(contentWidth, 100),
+      });
+      this.activeTextbox.setCoords(); // Update coordinates
+      this.activeTextbox.dirty = true;
+      (this.activeTextbox as any)._clearCache();
+      // this.waitForRender();
+      this.canvas.renderAll();
+      // this.syncUiFontSize(this.activeTextbox);
+    }
+  }
+
+  /* Apply colour */
+  applyTextColor() {
+    if (!this.activeTextbox) return;
+    this.activeTextbox.set({
+      fill: this.textColor,
+      scaleX: 1, // Reset scale
+      scaleY: 1,
+    });
+    this.activeTextbox.initDimensions();
+    this.activeTextbox.setCoords();
+    this.activeTextbox.dirty = true;
+    (this.activeTextbox as any)._clearCache?.();
+    this.canvas.renderAll();
+  }
+
+  /* Toggle bold / italic */
+  toggleStyle(style: 'bold' | 'italic') {
+    if (!this.activeTextbox) {
+      return;
+    }
+
+    if (style === 'bold') {
+      const newWeight =
+        this.activeTextbox.fontWeight === 'bold' ? 'normal' : 'bold';
+      this.activeTextbox.set('fontWeight', newWeight);
+    } else {
+      const newStyle =
+        this.activeTextbox.fontStyle === 'italic' ? 'normal' : 'italic';
+      this.activeTextbox.set('fontStyle', newStyle);
+    }
+    this.activeTextbox.initDimensions();
+    this.activeTextbox.setCoords();
+    this.activeTextbox.dirty = true;
+    (this.activeTextbox as any)._clearCache?.();
+    this.canvas.renderAll();
+    // this.canvas.requestRenderAll();
   }
 
   @HostListener('contextmenu', ['$event'])
@@ -259,7 +437,7 @@ export class CertificateBuilderComponent implements AfterViewInit, OnDestroy {
     let width = 100;
     let fontSize = 24;
 
-    if (fieldType === 'username') defaultText = 'User Name';
+    if (fieldType === 'username') defaultText = 'UserName';
     else if (fieldType === 'date') defaultText = 'DD/MM/YYYY';
     else if (fieldType === 'body') {
       defaultText = 'This is to certify that...';
@@ -276,7 +454,6 @@ export class CertificateBuilderComponent implements AfterViewInit, OnDestroy {
       lockUniScaling: false,
       name: fieldType,
     }) as NamedTextbox;
-    // (textbox as any).name = fieldType;
     textbox.name = fieldType;
     textbox.set({
       borderColor: 'green',
@@ -321,50 +498,29 @@ export class CertificateBuilderComponent implements AfterViewInit, OnDestroy {
   }
 
   download(): void {
-    const dataURL = this.canvas.toDataURL({ format: 'png', multiplier: 2 });
+    const dataURL = this.canvas.toDataURL({ format: 'png', multiplier: 1 });
     const link = document.createElement('a');
     link.href = dataURL;
     link.download = 'certificate.png';
     link.click();
   }
-  // update canvas fields
-  // updateCanvasFields(rowData: any) {
-  //   this.canvas.getObjects().forEach((obj) => {
-  //     const namedTextbox = obj as NamedTextbox;
-  //     if (obj.type === 'textbox' && namedTextbox.name) {
-  //       const fieldName = namedTextbox.name;
-  //       console.log(
-  //         'Checking field:',
-  //         fieldName,
-  //         'against rowData keys:',
-  //         Object.keys(rowData)
-  //       );
 
-  //       if (rowData[fieldName] !== undefined) {
-  //         namedTextbox.text = rowData[fieldName];
-  //         namedTextbox.dirty = true;
-  //         console.log('Rowdata: ', rowData[fieldName]);
-  //         console.log('namedTextbox.text', namedTextbox.text);
-  //       }
-  //     }
-  //   });
-
-  //   this.canvas.renderAll();
-  // }
   updateCanvasFields(rowData: any) {
     this.canvas.getObjects().forEach((obj) => {
       const namedTextbox = obj as NamedTextbox;
       if (obj.type === 'textbox' && namedTextbox.name) {
         const fieldName = namedTextbox.name;
-        console.log(
-          'Checking field:',
-          fieldName,
-          'against rowData keys:',
-          Object.keys(rowData)
-        );
-  
+
         if (rowData[fieldName] !== undefined) {
-          namedTextbox.set({ text: rowData[fieldName] });
+          let text = rowData[fieldName];
+          if (fieldName === 'date' && typeof rowData[fieldName] === 'number') {
+            const jsDate = XLSX.SSF.parse_date_code(rowData[fieldName]);
+            // utilities from xlsx
+            text = `${jsDate.y}-${String(jsDate.m).padStart(2, '0')}-${String(
+              jsDate.d
+            ).padStart(2, '0')}`;
+          }
+          namedTextbox.set({ text: text });
           namedTextbox.initDimensions();
           namedTextbox.setCoords();
           namedTextbox.dirty = true;
@@ -375,88 +531,66 @@ export class CertificateBuilderComponent implements AfterViewInit, OnDestroy {
     this.canvas.requestRenderAll();
   }
 
-  // async exportCanvasToPDF(filename: string) {
-  //   // Wait for the canvas to render all changes
-  //   await new Promise<void>((resolve) => {
-  //     requestAnimationFrame(() => {
-  //       this.canvas.requestRenderAll();
-  //       requestAnimationFrame(() => resolve());
-  //     });
-  //   });
-  
-  //   // Now get the final rendered image
-  //   const dataUrl = this.canvas.toDataURL({
-  //     format: 'png',
-  //     multiplier: 2, // ensures high resolution
-  //   });
-  
-  //   const pdf = new jsPDF({
-  //     orientation: this.canvas.width > this.canvas.height ? 'landscape' : 'portrait',
-  //     unit: 'px',
-  //     format: [this.canvas.width, this.canvas.height]
-  //   });
-  
-  //   pdf.addImage(dataUrl, 'PNG', 0, 0, this.canvas.width, this.canvas.height);
-  //   pdf.save(filename);
-  // }
-  async exportCanvasToPDF(filename: string) {
-
-    await this.waitForRender();
-    const dataUrl = this.canvas.toDataURL({
-      format: 'png',
-      multiplier: 2,
-      quality: 1,
+  canvasToJpeg(canvas: fabric.Canvas, scale = 1, quality = 0.8) {
+    return canvas.toDataURL({
+      format: 'jpeg' as const, // JPEG!
+      multiplier: scale, // 1 = 900×700 → ~200 KB
+      quality, // 0‑1, tweak until it looks good
     });
+  }
+  async exportCanvasToPDF(filename: string) {
+    await this.waitForRender();
+    const dataUrl = this.canvasToJpeg(this.canvas, 1, 1);
+
     const pdf = new jsPDF({
-      orientation: this.canvas.width > this.canvas.height ? 'landscape' : 'portrait',
+      orientation:
+        this.canvas.width > this.canvas.height ? 'landscape' : 'portrait',
       unit: 'px',
       format: [this.canvas.width, this.canvas.height],
+      compress: true,
     });
-    pdf.addImage(dataUrl, 'PNG', 0, 0, this.canvas.width, this.canvas.height);
+    pdf.addImage(
+      dataUrl,
+      'JPEG',
+      0,
+      0,
+      this.canvas.width,
+      this.canvas.height,
+      undefined,
+      'FAST'
+    );
     pdf.save(filename);
   }
-  
-  
-  // export canvas to pdf
-  // exportCanvasToPDF(filename: string) {
-  //   const dataUrl = this.canvas.toDataURL({ format: 'png', multiplier: 2 });
-   
-  
-  //   const pdf = new jsPDF({
-  //     orientation:
-  //       this.canvas.width > this.canvas.height ? 'landscape' : 'portrait',
-  //     unit: 'px',
-  //     format: [this.canvas.width, this.canvas.height],
-  //   });
+  // generate one multi-page PDF
+  async generateCertificateBatchPDF() {
+    if (!this.uploadedData?.length) {
+      alert('Please upload Excel data first');
+      return;
+    }
+    // create an empty, landscape PDF, enable compression
+    const pdf = new jsPDF({
+      orientation: 'landscape',
+      unit: 'px',
+      format: [900, 700],
+      compress: true,
+    });
+    for (let i = 0; i < this.uploadedData.length; i++) {
+      const row = this.uploadedData[i];
+      // Update the textbox on canvas
+      this.waitForRender();
+      this.updateCanvasFields(row);
+      await this.waitForRender();
 
-  //   pdf.addImage(dataUrl, 'PNG', 0, 0, this.canvas.width, this.canvas.height);
-  //   pdf.save(filename);
-  // }
-  // Generate certificate from Excel file
-  // async generateCertificates() {
-  //   if (!this.uploadedData || this.uploadedData.length === 0) {
-  //     alert('Please upload Excel data first');
-  //     return;
-  //   }
+      // get JPEG snapshot
+      const img = this.canvasToJpeg(this.canvas, 1, 0.85);
 
-  //   for (let i = 0; i < this.uploadedData.length; i++) {
-  //     const row = this.uploadedData[i];
-  //     console.log('Updating with row: ', row);
-  //     this.updateCanvasFields(row);
-
-  //     // Small delay to ensure canvas updates (optional)
-  //     // await new Promise(res => setTimeout(res, 200));
-  //     // await this.waitForRender();
-  //     console.log('Final canvas text values before export:');
-  //     this.canvas.getObjects().forEach((obj) => {
-  //       const txt = obj as NamedTextbox;
-  //       console.log(`Name: ${txt.name}, Text: ${txt.text}`);
-  //     });
-
-  //     // Save PDF for each row with a unique filename
-  //     await this.exportCanvasToPDF(`certificate_${i + 1}.pdf`);
-  //   }
-  // }
+      // add to pdf
+      if (i > 0) pdf.addPage();
+      pdf.addImage(img, 'JPEG', 0, 0, 900, 700, undefined, 'FAST');
+    }
+    // Download once at the end
+    pdf.save(`certificates_batch_${this.uploadedData.length}.pdf`);
+  }
 
   async generateCertificates() {
     if (!this.uploadedData || this.uploadedData.length === 0) {
@@ -465,7 +599,7 @@ export class CertificateBuilderComponent implements AfterViewInit, OnDestroy {
     }
     for (let i = 0; i < this.uploadedData.length; i++) {
       const row = this.uploadedData[i];
-    
+
       this.updateCanvasFields(row);
       await this.waitForRender();
       await this.exportCanvasToPDF(`certificate_${i + 1}.pdf`);
