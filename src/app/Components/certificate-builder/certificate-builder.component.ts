@@ -36,6 +36,7 @@ export class CertificateBuilderComponent implements AfterViewInit, OnDestroy {
   dragOver = false;
   copiedObject: fabric.Object | null = null;
   activeTextbox: fabric.Textbox | null = null;
+  private hasUnsavedChanges: boolean = false; // Track unsaved changes
 
   fontFamilies = [
     'Arial',
@@ -53,6 +54,8 @@ export class CertificateBuilderComponent implements AfterViewInit, OnDestroy {
   isShiftPressed: boolean = false;
 
   ngAfterViewInit(): void {
+    // this.setupEventListener();
+  
     let isDragging = false;
     let lastPosX = 0;
     let lastPosY = 0;
@@ -108,10 +111,16 @@ export class CertificateBuilderComponent implements AfterViewInit, OnDestroy {
     this.canvas.on('object:modified', this.updateCoords.bind(this));
     this.canvas.on('object:moving', this.updateCoords.bind(this));
     this.canvas.on('object:scaling', this.updateCoords.bind(this));
-    this.canvas.on('object:scaling', (e) =>
-      this.handleTextboxScaling(e.target)
+    this.canvas.on('object:scaling', (e) =>{
+      this.handleTextboxScaling(e.target);
+     this.hasUnsavedChanges = true;
+    }
     );
-    this.canvas.on('object:modified', (e) => this.syncUiFontSize(e.target));
+    this.canvas.on('object:modified', (e) => {
+      this.syncUiFontSize(e.target);
+      this.hasUnsavedChanges = true;
+
+    });
     this.canvas.on('selection:created', (e) => {
       this.onSelection(e as unknown as CanvasSelectEvent);
     });
@@ -163,7 +172,18 @@ export class CertificateBuilderComponent implements AfterViewInit, OnDestroy {
       this.canvas.selection = true;
       this.htmlCanvas.nativeElement.style.cursor = 'default';
     });
+    window.addEventListener('beforeunload',this.handleBeforeUnload);
   }
+  private handleBeforeUnload = (event: BeforeUnloadEvent): string | undefined => {
+    if (this.hasUnsavedChanges) {
+      const confirmationMessage = 'All changes will be removed if you refresh. Are you sure?';
+      event.returnValue = confirmationMessage; // Standard for most browsers
+      return confirmationMessage; // For some older browsers
+    }
+    return undefined;
+  };
+
+
   // keep UI in sync helper
   private syncUiFontSize(obj: fabric.Object | undefined) {
     if (obj?.type === 'textbox') {
@@ -248,6 +268,7 @@ export class CertificateBuilderComponent implements AfterViewInit, OnDestroy {
     (this.activeTextbox as any)._clearCache?.();
     this.canvas.requestRenderAll();
     this.uiFontSize = +size;
+    this.hasUnsavedChanges = true;
   }
 
   applyTextChange() {
@@ -270,6 +291,7 @@ export class CertificateBuilderComponent implements AfterViewInit, OnDestroy {
       (this.activeTextbox as any)._clearCache();
       // this.waitForRender();
       this.canvas.renderAll();
+      this.hasUnsavedChanges = true;
       // this.syncUiFontSize(this.activeTextbox);
     }
   }
@@ -287,6 +309,7 @@ export class CertificateBuilderComponent implements AfterViewInit, OnDestroy {
     this.activeTextbox.dirty = true;
     (this.activeTextbox as any)._clearCache?.();
     this.canvas.renderAll();
+    this.hasUnsavedChanges = true;
   }
 
   /* Toggle bold / italic */
@@ -309,6 +332,7 @@ export class CertificateBuilderComponent implements AfterViewInit, OnDestroy {
     this.activeTextbox.dirty = true;
     (this.activeTextbox as any)._clearCache?.();
     this.canvas.renderAll();
+    this.hasUnsavedChanges = true;
     // this.canvas.requestRenderAll();
   }
 
