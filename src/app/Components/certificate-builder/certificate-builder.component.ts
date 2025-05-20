@@ -15,6 +15,9 @@ import { jsPDF } from 'jspdf';
 import { NgIf, NgFor } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { TEvent, TPointerEvent } from 'fabric';
+import JSZip from 'jszip';
+import {saveAs} from 'file-saver';
+
 
 type CanvasPointerEvent = TEvent<TPointerEvent>;
 type CanvasSelectEvent = CanvasPointerEvent & { target?: fabric.Object };
@@ -127,9 +130,7 @@ export class CertificateBuilderComponent implements AfterViewInit, OnDestroy {
     this.canvas.on('selection:updated', (e) => {
       this.onSelection(e as unknown as CanvasPointerEvent);
     });
-    this.canvas.on(
-      'before:selection:cleared',
-      () => (this.activeTextbox = null)
+    this.canvas.on('before:selection:cleared',() => (this.activeTextbox = null)
     );
     this.canvas.on('mouse:wheel', (opt) => {
       const delta = opt.e.deltaY;
@@ -562,10 +563,99 @@ export class CertificateBuilderComponent implements AfterViewInit, OnDestroy {
       quality, // 0‑1, tweak until it looks good
     });
   }
-  async exportCanvasToPDF(filename: string) {
+  // async exportCanvasToPDF(filename: string) {
+  //   await this.waitForRender();
+  //   const dataUrl = this.canvasToJpeg(this.canvas, 1, 1);
+
+  //   const pdf = new jsPDF({
+  //     orientation:
+  //       this.canvas.width > this.canvas.height ? 'landscape' : 'portrait',
+  //     unit: 'px',
+  //     format: [this.canvas.width, this.canvas.height],
+  //     compress: true,
+  //   });
+  //   pdf.addImage(
+  //     dataUrl,
+  //     'JPEG',
+  //     0,
+  //     0,
+  //     this.canvas.width,
+  //     this.canvas.height,
+  //     undefined,
+  //     'FAST'
+  //   );
+  //   pdf.save(filename);
+  // }
+  // generate one multi-page PDF
+  // async generateCertificateBatchPDF() {
+  //   if (!this.uploadedData?.length) {
+  //     alert('Please upload Excel data first');
+  //     return;
+  //   }
+  //   // create an empty, landscape PDF, enable compression
+  //   const pdf = new jsPDF({
+  //     orientation: 'landscape',
+  //     unit: 'px',
+  //     format: [900, 700],
+  //     compress: true,
+  //   });
+  //   for (let i = 0; i < this.uploadedData.length; i++) {
+  //     const row = this.uploadedData[i];
+  //     // Update the textbox on canvas
+  //     this.waitForRender();
+  //     this.updateCanvasFields(row);
+  //     await this.waitForRender();
+
+  //     // get JPEG snapshot
+  //     const img = this.canvasToJpeg(this.canvas, 1, 0.85);
+
+  //     // add to pdf
+  //     if (i > 0) pdf.addPage();
+  //     pdf.addImage(img, 'JPEG', 0, 0, 900, 700, undefined, 'FAST');
+  //   }
+  //   // Download once at the end
+  //   pdf.save(`certificates_batch_${this.uploadedData.length}.pdf`);
+  // }
+
+  // async generateCertificates() {
+  //   if (!this.uploadedData || this.uploadedData.length === 0) {
+  //     alert('Please upload Excel data first');
+  //     return;
+  //   }
+  //   for (let i = 0; i < this.uploadedData.length; i++) {
+  //     const row = this.uploadedData[i];
+
+  //     this.updateCanvasFields(row);
+  //     await this.waitForRender();
+  //     await this.exportCanvasToPDF(`certificate_${i + 1}.pdf`);
+  //   }
+  // }
+
+  async generateCertificatesZip() {
+    if (!this.uploadedData || this.uploadedData.length === 0) {
+      alert('Please upload Excel data first');
+      return;
+    }
+  
+    const zip = new JSZip();
+  
+    for (let i = 0; i < this.uploadedData.length; i++) {
+      const row = this.uploadedData[i];
+      this.updateCanvasFields(row);
+      await this.waitForRender();
+  
+      const pdfBlob = await this.exportCanvasToPDFBlob();
+      zip.file(`certificate_${i + 1}.pdf`, pdfBlob);
+    }
+  
+    const zipBlob = await zip.generateAsync({ type: 'blob' });
+    saveAs(zipBlob, 'certificates.zip');
+  }
+
+  async exportCanvasToPDFBlob(): Promise<Blob> {
     await this.waitForRender();
     const dataUrl = this.canvasToJpeg(this.canvas, 1, 1);
-
+  
     const pdf = new jsPDF({
       orientation:
         this.canvas.width > this.canvas.height ? 'landscape' : 'portrait',
@@ -573,6 +663,7 @@ export class CertificateBuilderComponent implements AfterViewInit, OnDestroy {
       format: [this.canvas.width, this.canvas.height],
       compress: true,
     });
+  
     pdf.addImage(
       dataUrl,
       'JPEG',
@@ -583,52 +674,11 @@ export class CertificateBuilderComponent implements AfterViewInit, OnDestroy {
       undefined,
       'FAST'
     );
-    pdf.save(filename);
+  
+    return pdf.output('blob');
   }
-  // generate one multi-page PDF
-  async generateCertificateBatchPDF() {
-    if (!this.uploadedData?.length) {
-      alert('Please upload Excel data first');
-      return;
-    }
-    // create an empty, landscape PDF, enable compression
-    const pdf = new jsPDF({
-      orientation: 'landscape',
-      unit: 'px',
-      format: [900, 700],
-      compress: true,
-    });
-    for (let i = 0; i < this.uploadedData.length; i++) {
-      const row = this.uploadedData[i];
-      // Update the textbox on canvas
-      this.waitForRender();
-      this.updateCanvasFields(row);
-      await this.waitForRender();
+  
 
-      // get JPEG snapshot
-      const img = this.canvasToJpeg(this.canvas, 1, 0.85);
-
-      // add to pdf
-      if (i > 0) pdf.addPage();
-      pdf.addImage(img, 'JPEG', 0, 0, 900, 700, undefined, 'FAST');
-    }
-    // Download once at the end
-    pdf.save(`certificates_batch_${this.uploadedData.length}.pdf`);
-  }
-
-  async generateCertificates() {
-    if (!this.uploadedData || this.uploadedData.length === 0) {
-      alert('Please upload Excel data first');
-      return;
-    }
-    for (let i = 0; i < this.uploadedData.length; i++) {
-      const row = this.uploadedData[i];
-
-      this.updateCanvasFields(row);
-      await this.waitForRender();
-      await this.exportCanvasToPDF(`certificate_${i + 1}.pdf`);
-    }
-  }
 
   waitForRender(): Promise<void> {
     return new Promise((resolve) => {
