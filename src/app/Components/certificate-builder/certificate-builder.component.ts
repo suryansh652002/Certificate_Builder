@@ -556,7 +556,7 @@ export class CertificateBuilderComponent implements AfterViewInit, OnDestroy {
     this.canvas.requestRenderAll();
   }
 
-  canvasToJpeg(canvas: fabric.Canvas, scale = 1, quality = 0.8) {
+  canvasToJpeg(canvas: fabric.Canvas, scale = 2, quality = 1) {
     return canvas.toDataURL({
       format: 'jpeg' as const, // JPEG!
       multiplier: scale, // 1 = 900×700 → ~200 KB
@@ -654,7 +654,7 @@ export class CertificateBuilderComponent implements AfterViewInit, OnDestroy {
 
   async exportCanvasToPDFBlob(): Promise<Blob> {
     await this.waitForRender();
-    const dataUrl = this.canvasToJpeg(this.canvas, 1, 1);
+    const dataUrl = this.canvasToJpeg(this.canvas, 2, 1);
   
     const pdf = new jsPDF({
       orientation:
